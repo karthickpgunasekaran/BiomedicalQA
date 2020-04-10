@@ -15,6 +15,39 @@ import numpy as np
 from sklearn.metrics import f1_score
 from sklearn.metrics import classification_report
 import json
+import torch.nn as nn
+import torch
+from torch.utils.data import Dataset, DataLoader
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+
+class DataHelper(Dataset):
+	def __init__(self, data):
+		self.data = torch.FloatTensor(data.astype('float'))
+        
+	def __len__(self):
+		return len(self.data)
+
+	def __getitem__(self, index):
+		target = self.data[index][-1]
+		data_val = self.data[index] [:-1]
+		return data_val,target
+
+
+# Fully connected neural network with one hidden layer
+class NeuralNet(nn.Module):
+    def __init__(self, input_size, hidden_size, num_classes):
+        super(NeuralNet, self).__init__()
+        self.fc1 = nn.Linear(input_size, hidden_size) 
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(hidden_size, num_classes)  
+    
+    def forward(self, x):
+        out = self.fc1(x)
+        out = self.relu(out)
+        out = self.fc2(out)
+        return out
 
 class BioASQ_data:
 	def __init__(self,ques,context,answer,qid):
@@ -31,9 +64,9 @@ class BioSentVec_Yes_no:
 	def __init__(self,file_name,sim_thresh,sim_type):
 		self.file_name = file_name
 		self.sim_type = sim_type
-		self.model_path = "/mnt/nfs/work1/696ds-s20/kgunasekaran/sentvec/BioSentVec_PubMed_MIMICIII-bigram_d700.bin"
+		#self.model_path = "/mnt/nfs/work1/696ds-s20/kgunasekaran/sentvec/BioSentVec_PubMed_MIMICIII-bigram_d700.bin"
 		self.model = sent2vec.Sent2vecModel()
-		
+		self.batch_size =12
 		try:
     			self.model.load_model(self.model_path)
 		except Exception as e:
@@ -75,6 +108,80 @@ class BioSentVec_Yes_no:
 		dot_sim = np.dot(sen_vec1,np.transpose( sen_vec2))
 		return dot_sim
 
+	def train(self,model, device, train_loader, optimizer):
+		model.train()
+		y_true = []
+		y_pred = []
+		for i in train_loader:
+			#LOADING THE DATA IN A BATCH
+			data, target = i
+		 
+			#MOVING THE TENSORS TO THE CONFIGURED DEVICE
+			data, target = data.to(device), target.to(device)
+		       
+			#FORWARD PASS
+			output = model(data.float())
+			loss = criterion(output, target.unsqueeze(1)) 
+			
+			#BACKWARD AND OPTIMIZE
+			optimizer.zero_grad()
+			loss.backward()
+			optimizer.step()
+			
+			# PREDICTIONS 
+			pred = np.round(output.detach())
+			target = np.round(target.detach())             
+			y_pred.extend(pred.tolist())
+			y_true.extend(target.tolist())
+		print("Accuracy on training set is" ,accuracy_score(y_true,y_pred))
+
+	'''
+	#TESTING THE MODEL
+	def test(self,model, device, test_loader):
+	    #model in eval mode skips Dropout etc
+	    model.eval()
+	    y_true = []
+	    y_pred = []
+	    
+	    # set the requires_grad flag to false as we are in the test mode
+	    with torch.no_grad():
+		for i in test_loader:
+		    
+		    #LOAD THE DATA IN A BATCH
+		    data,target = i
+		    
+		    # moving the tensors to the configured device
+		    data, target = data.to(device), target.to(device)
+		    
+		    # the model on the data
+		    output = model(data.float())
+		               
+		    #PREDICTIONS
+		    pred = np.round(output)
+		    target = target.float()
+		    y_true.extend(target.tolist()) 
+		    y_pred.extend(pred.reshape(-1).tolist())
+	    print("Accuracy on test set is" , accuracy_score(y_true,y_pred))
+	'''
+	def processTrain(self,train_dataset):
+		#train dataset pandas variable
+		
+		train_helper = DataHelper(train_dataset)
+		train_loader = torch.utils.data.DataLoader(dataset=train_helper, 
+                                           batch_size=self.batch_size, 
+                                           shuffle=True)
+
+
+		self.input_size = 700
+		model = NeuralNet(self.input_size, 200, 2).to(device)
+		# Loss and optimizer
+		criterion = nn.CrossEntropyLoss()
+		optimizer = torch.optim.Adam(model.parameters(), lr=self.learning_rate)
+
+		for i in range(0,self.epochs):
+			self.train(model, device, train_loader, optimizer)
+			#torch.save(model.state_dict(), 'train_valid_exp4-epoch{}.pth'.format(epoch)) 
+  
 	def processQApairs(self):
 		qid_sim_hm = {}
 		self.loadQuestionContextAnswer()
@@ -82,32 +189,28 @@ class BioSentVec_Yes_no:
 		sim_no = []
 		cnt_yes =0
 		cnt_no = 0
+		'''
+		ques_vec = self.getEmbeddings(self.bio_asq_data[:].ques)
+		context_vec = self.getEmbeddings(self.bio_asq_data[:].context)
+		con_vec = np.concatenate(np.concatenate((ques_vec,context_vec),axis=1),self.bio_asq_data[:].true_ans)
+		'''
+
+		all_inps = np.zeros((1,1401), dtype=float)
+
+		
+		
+		#print("ques vector:",ques_vec.shape)
+		
 		for i in range(0,len(self.bio_asq_data)):
 			ques_vec = self.getEmbeddings(self.bio_asq_data[i].ques)
 			context_vec = self.getEmbeddings(self.bio_asq_data[i].context)
 			
-			cos_sim = self.cosine_sim(ques_vec,context_vec)
-			dot_sim =  self.dot_sim(ques_vec,context_vec)
-			self.bio_asq_data[i].storeSimCosine(cos_sim)
-			self.bio_asq_data[i].storeSimDot(dot_sim)
-			if self.sim_type ==1:
-				sim = cos_sim
-			else:
-				sim = dot_sim
-			if self.bio_asq_data[i].qid in qid_sim_hm:
-				qid_sim_hm[self.bio_asq_data[i].qid] = max(qid_sim_hm[self.bio_asq_data[i].qid],sim)
-			else:
-				qid_sim_hm[self.bio_asq_data[i].qid] = sim
-			if self.bio_asq_data[i].true_ans==0:
-				cnt_no=cnt_no+1
-				sim_no.append(sim)
-			else:
-				cnt_yes = cnt_yes+1
-				sim_yes.append(sim)
-		np.save("sim_no.npy",np.asarray(sim_no))
-		np.save("sim_yes.npy",np.asarray(sim_yes))
-		preds,gt = self.createList(qid_sim_hm)
-		self.calculateMetrics(preds,gt)
+			con_vec = np.concatenate((np.concatenate((ques_vec,context_vec),axis=1),self.bio_asq_data[i].true_ans),axis=1)
+			all_inps = np.append(all_inps,con_vec,axis = 0)
+
+		self.processTrain(all_inps)
+			
+		
 
 	def createList(self,qid_sim_hm):
 		pred_list =[]
