@@ -30,6 +30,9 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 class DataHelper(Dataset):
 	def __init__(self,qid,data):
 		self.data = torch.FloatTensor(data.astype('float'))
+		#if qid==None:
+		#self.qid = "00"
+		#else:
 		self.qid = qid
 	def __len__(self):
 		return len(self.data)
@@ -37,21 +40,94 @@ class DataHelper(Dataset):
 	def __getitem__(self, index):
 		target = self.data[index][-1]
 		data_val = self.data[index] [:-1]
-		return data_val,target,self.qid
+		if self.qid==None:
+			return data_val,target,"qwerty"
+		#print("index:",index)
+		return data_val,target,self.qid[index]
 
 
 # Fully connected neural network with two layer. BioSentVec embeddings will be concatenated and fed into it. Output will be either yes/no here.
 class NeuralNet(nn.Module):
     def __init__(self, input_size, hidden_size, num_classes):
         super(NeuralNet, self).__init__()
-        self.fc1 = nn.Linear(input_size, hidden_size) 
+        self.dropout = nn.Dropout(0.10)
+        #self.fc1 = nn.Linear(input_size, hidden_size)
+        self.fc1_1 = nn.Linear(input_size,2) 
         self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(hidden_size, num_classes)
-        self.softmax = nn.Softmax()
+        #self.fc2 = nn.Linear(hidden_size, num_classes)
+        self.fc1_5 = nn.Linear(1400,1100)
+        self.fc2_5 = nn.Linear(1100,800)
+        self.fc3_5 = nn.Linear(800,500)
+        self.fc4_5 = nn.Linear(500,250)
+        self.fc5_5 = nn.Linear(250,2)
+        self.fcnew = nn.Linear(input_size,num_classes)
+        self.softmax = nn.Softmax(dim=1)
     def forward(self, x):
-        out = self.fc1(x)
+        out = self.dropout(x)
+        #one layer
+        #out = self.fc1_1(out)
+        #two layer
+        
+        '''
+        out = self.fc1_5(out)
+        out = self.relu(out)
+        out = self.dropout(out)
+        out = self.fc2_5(out)
+        out = self.relu(out)
+        out = self.dropout(out)
+        out = self.fc3_5(out)
+        out = self.relu(out)
+        out = self.dropout(out)
+        out = self.fc4_5(out)
+        out = self.relu(out)
+        out = self.dropout(out)
+        out = self.fc5_5(out)
+        #out = self.fc3(out)
+        out = self.softmax(out)
+        '''
+        return out
+
+
+class NeuralNet_2layer(nn.Module):
+    def __init__(self, input_size, hidden_size, num_classes):
+        super(NeuralNet_2layer, self).__init__()
+        self.dropout = nn.Dropout(0.10)
+        self.fc1 = nn.Linear(input_size, 700)
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(700,num_classes)
+        self.softmax = nn.Softmax(dim=1)
+
+    def forward(self, x):
+        out = self.dropout(x)
+        out = self.relu(out)
+        out = self.fc1(out)
+        out = self.dropout(out)
         out = self.relu(out)
         out = self.fc2(out)
+        out = self.softmax(out)
+        return out
+
+
+class NeuralNet_3layer(nn.Module):
+    def __init__(self, input_size, hidden_size, num_classes):
+        super(NeuralNet_3layer, self).__init__()
+        self.dropout = nn.Dropout(0.10)
+        self.fc1 = nn.Linear(input_size, 800)
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(800,400)
+        self.fc3 = nn.Linear(400,num_classes)
+        self.softmax = nn.Softmax(dim=1)
+
+    def forward(self, x):
+        out = self.dropout(x)
+        out = self.relu(out)
+        out = self.fc1(out)
+        out = self.dropout(out)
+        out = self.relu(out)
+        out = self.fc2(out)
+        out = self.dropout(out)
+        out = self.relu(out)
+        out = self.fc3(out)
         out = self.softmax(out)
         return out
 
@@ -75,13 +151,16 @@ class BioSentVec_Yes_no:
 		self.biosentvec_model_path = "/mnt/nfs/work1/696ds-s20/kgunasekaran/sentvec/BioSentVec_PubMed_MIMICIII-bigram_d700.bin"
 		self.biosentvec_model = sent2vec.Sent2vecModel()
 		# hyparameters to be used and played around with
-		self.batch_size =12
-		self.learning_rate = 5e-4
+		self.batch_size = 32
+		self.run_type = run_type
+		self.learning_rate = 11e-6 #3- 9e-6
 		self.input_size = 1400
-		self.hidden_size = 400
+		self.hidden_size = 700
 		self.output_size = 2
-		self.unbalanced =500
-		self.epochs =epochs
+		self.unbalanced =9200
+		self.weight_decay = 1e-3 #1e-1
+		self.epochs = 16 #epochs
+		self.no_of_layers =2
 		#end hyperparameters
 		try:
     			print("loading biosentvec model..")
@@ -135,13 +214,16 @@ class BioSentVec_Yes_no:
 		       
 			#FORWARD PASS
 			output = self.model(data.float())
+			#print("data : ",data.float())
 			#print(output.size()," ",target.size())
+			#print("target:",target)
+			#print("output:",output)
 			loss = self.criterion(output, target) 
-			
+			#print("loss: ",loss.data)
 			#BACKWARD AND OPTIMIZE
 			self.optimizer.zero_grad()
 			loss.backward()
-			optimizer.step()
+			self.optimizer.step()
 			
 			# PREDICTIONS 
 			pred = np.round(torch.argmax(output,dim=1).data.cpu().numpy())
@@ -152,21 +234,25 @@ class BioSentVec_Yes_no:
 
 	#This function stores the predictions and target values for each qid. Highest probability prediction from softmax is stored here for each qid. 
 	def savePredTrue(self,qid,pred,pred_prob,target):
-
 		for i in range(0,len(pred)):
+			#print("Qid:",qid[i])
 			self.qid_target[qid[i]] = target[i]
 			if qid[i] in self.qid_pred:
+				#print("if part ",self.qid_pred_prob[qid[i]])
 				if self.qid_pred_prob[qid[i]] < pred_prob[i]:
 					self.qid_pred_prob[qid[i]] = pred_prob[i]
 					self.qid_pred[qid[i]] = pred[i]
 			else:
+				#print("else part")
 				self.qid_pred_prob[qid[i]] = pred_prob[i]
 				self.qid_pred[qid[i]] = pred[i]
+			#print("dict len:",len(self.qid_pred))
 	#This function creates list of preds and true values from the dictionary created in savePredTrue().
 	def createListForAnswers(self):
 		pred = []
 		true =[]
-		for i in self.qid_eval:
+		print("No of elements in dict: ",len(self.qid_pred))
+		for i in self.qid_pred:
 			pred.append(self.qid_pred[i])
 			true.append(self.qid_target[i])
 		return pred,true
@@ -174,7 +260,7 @@ class BioSentVec_Yes_no:
 	#Evaluation of model is carried out in this function.
 	def eval(self):
 		#model in eval mode skips Dropout etc
-		model.eval()
+		self.model.eval()
 		y_true = []
 		y_pred = []
 		# set the requires_grad flag to false as we are in the test mode
@@ -188,13 +274,16 @@ class BioSentVec_Yes_no:
 				output = self.model(data.float())
                         	# PREDICTIONS
 				pred = np.round(torch.argmax(output,dim=1).data.cpu().numpy())
-				pred_prob = torch.max(output,dim=1).data.cpu().numpy()
+				pred_prob = torch.max(output,dim=1)[0].data.cpu().numpy()
+				#print("pred prob:",pred_prob)
 				target = np.round(target.data.cpu().numpy())
 				self.savePredTrue(qid,pred,pred_prob,target)
 				#y_pred.extend(pred.tolist())
 				#y_true.extend(target.tolist())
-		print("Accuracy on test set is" , accuracy_score(y_true,y_pred))
+		#print("Accuracy on test set is" , accuracy_score(gt,preds))
 		preds, gt = self.createListForAnswers()
+		print("Accuracy on test set is" , accuracy_score(gt,preds))
+		print("Final predictions count:",len(gt))
 		self.calculateMetrics(preds,gt)
 
 	#This function carries out training depending on no of epochs.
@@ -203,7 +292,7 @@ class BioSentVec_Yes_no:
 		for i in range(0,self.epochs):
 			print("Running epoch :",i)
 			self.train()
-			torch.save(model.state_dict(), self.output_dir+'epoch{}.pth'.format(i))
+			torch.save(self.model.state_dict(), self.output_dir+'epoch{}.pth'.format(i))
  
 	#This function helps carry out evaluation.
 	def processEval(self):
@@ -214,31 +303,38 @@ class BioSentVec_Yes_no:
 	def processTrainEval(self):
 		#train dataset pandas variable
 		for i in range(0,self.epochs):
+			self.qid_pred = {}
+			self.qid_pred_prob = {}
+			self.qid_target = {}
 			print("Running epoch :",i)
 			self.train()
-			torch.save(model.state_dict(), self.output_dir+'epoch{}.pth'.format(i)) 
+			torch.save(self.model.state_dict(), self.output_dir+'epoch{}.pth'.format(i)) 
 			self.eval()
 
   	#This function initializes all the datalaoders and models required for training and testing
 	def createDataLoaderAndModels(self):
 		#load and init model
-		self.model = NeuralNet(self.input_size, self.hidden_size, self.output_size).to(device)
+		if self.no_of_layers==2:
+			self.model = NeuralNet_2layer(self.input_size, self.hidden_size, self.output_size).to(device)
+		else:
+			self.model = NeuralNet_3layer(self.input_size, self.hidden_size, self.output_size).to(device)
+
 		if self.model_path!="-":
 			print("loading pretrained model...")
-			model.load_state_dict(torch.load(self.model_path))
+			self.model.load_state_dict(torch.load(self.model_path))
 		self.criterion = nn.CrossEntropyLoss()
 		
 		#initialize for training
 		if self.run_type==2 or self.run_type==0:
-			train_helper = DataHelper(self.train_emb_data)
+			train_helper = DataHelper(None,self.train_emb_data)
 			self.train_loader = torch.utils.data.DataLoader(dataset=train_helper, 
                                            batch_size=self.batch_size, 
                                            shuffle=True)
 			
-			self.optimizer = torch.optim.Adam(model.parameters(), lr=self.learning_rate)
+			self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate,weight_decay=self.weight_decay)
 		#initialize for evaluation
 		if self.run_type==2 or self.run_type==1:
-			eval_helper = DataHelper(self.eval_emb_data)
+			eval_helper = DataHelper(self.eval_qid,self.eval_emb_data)
 			self.eval_loader = torch.utils.data.DataLoader(dataset=eval_helper,
                                            batch_size=self.batch_size)
 
@@ -257,7 +353,7 @@ class BioSentVec_Yes_no:
 			temp_ans[0,0] = inp_data[i].true_ans 
 			con_vec_merged = np.concatenate((con_vec,temp_ans),axis=1)
 			embs = np.append(embs,con_vec_merged,axis = 0)
-		return embs,qid
+		return embs[1:][:],qid
 
 	# This function helps load all the question context pairs from the json file
 	def loadQuestionContextAnswer(self,file_name,run_type):
@@ -296,7 +392,7 @@ class BioSentVec_Yes_no:
 			if not (self.force_create_emb==False and path.exists("processed_biosentvec_emb_train.npy")):
 				bio_yes, bio_no = self.loadQuestionContextAnswer(self.train_file,0)
 				print("train yes ques:",len(bio_yes)," train no ques: ",len(bio_no))
-				self.bio_asq_data_train = bio_yes[:self.unbalanced] + bio_no[:self.unbalanced]
+				self.bio_asq_data_train = bio_yes[:self.unbalanced] + bio_no[:self.unbalanced]#bio_yes+bio_no+bio_no+bio_no+bio_no+bio_no+bio_no+bio_no #bio_yes[:self.unbalanced] + bio_no[:self.unbalanced]
 				random.shuffle(self.bio_asq_data_train)
 				self.train_emb_data,_ = self.convertToEmbeddings(self.bio_asq_data_train)
 				np.save("processed_biosentvec_emb_train.npy",self.train_emb_data)
@@ -304,7 +400,7 @@ class BioSentVec_Yes_no:
 
 		if self.run_type==1 or self.run_type==2:
 			self.bio_asq_data_eval, _ = self.loadQuestionContextAnswer(self.eval_file,1)
-			print("eval yes ques:",len(bio_yes)," eval no ques: ",len(bio_no))
+			#print("eval yes ques:",len(bio_yes)," eval no ques: ",len(bio_no))
 			self.eval_emb_data,self.eval_qid = self.convertToEmbeddings(self.bio_asq_data_eval)
 
 		self.createDataLoaderAndModels()
