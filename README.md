@@ -24,7 +24,7 @@ $ pip install -r requirements.txt
 Use the following comand to see the posible models and training configurations.
 
 ```
-$ python biobert/training.py --help
+$ python TF_based/Yesno_BioQA.py --help
 
 usage: training.py 
 
@@ -38,15 +38,15 @@ optional arguments:
 For instance, to train, execute the following:
 
 ```
-$ python biobert/training.py 
+$ python TF_based/Yesno_BioQA.py
 ```
 
 ## 4. Extract predictions from the test set using a trained model
 
 ```
-python biobert/test.py 
+python TF_based/Yesno_BioQA.py 
 ```
-Supply, `--resume_snapshot` and `experiment_dir` appropriately from your training run. (Look at the console log of your training to find the paths to these two).
+
 
 # Running baselines
 
